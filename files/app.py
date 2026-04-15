@@ -287,28 +287,8 @@ html, body, [class*="css"] {
     border: 1px solid var(--orange-border);
 }
 
-/* ══════════════════════════════════════════
-   DOTS
-══════════════════════════════════════════ */
-.dot-row {
-    display: flex; gap: 7px;
-    flex-wrap: wrap; align-items: center;
-    margin: 0.5rem 0 0.9rem 0;
-}
-.dot {
-    width: 11px; height: 11px;
-    border-radius: 50%; display: inline-block;
-    transition: transform 0.15s;
-}
-.dot-new    { background: var(--dot-new); }
-.dot-ok     { background: var(--dot-ok); }
-.dot-edited { background: var(--dot-edited); }
-.dot-active {
-    outline: 2.5px solid var(--accent);
-    outline-offset: 2px;
-    transform: scale(1.2);
-}
-.dot-meta { font-size: 0.8rem; color: var(--text3); margin-right: 6px; }
+/* row counter */
+.row-meta { font-size: 0.82rem; color: var(--text3); margin: 0.4rem 0 0.8rem 0; }
 
 /* ══════════════════════════════════════════
    DONE BANNER
@@ -643,19 +623,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# ── Dots navigation ──
-dot_map = {"لم يُراجع": "dot-new", "معتمد": "dot-ok", "معدّل": "dot-edited"}
-dots = "".join(
-    f'<span class="dot {dot_map.get(r["audit_status"],"dot-new")} {"dot-active" if j == cur_row else ""}"'
-    f' title="{r["entity_final"][:35]}"></span>'
-    for j, r in enumerate(rows)
-)
-st.markdown(f"""
-<div class="dot-row">
-  {dots}
-  <span class="dot-meta">السجل {cur_row + 1} من {len(rows)}</span>
-</div>
-""", unsafe_allow_html=True)
+st.markdown(f'<div class="row-meta">السجل {cur_row + 1} من {len(rows)}</div>', unsafe_allow_html=True)
 
 # ─── Current Row ───────────────────────────────────────────────────────────────
 row      = rows[cur_row]
