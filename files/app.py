@@ -3,6 +3,10 @@ import pandas as pd
 import io
 from datetime import datetime
 
+# TEMP - remove after use
+from sheets import get_spreadsheet, create_user
+sp = get_spreadsheet()
+create_user(sp, "Jarrah01", "rrrrr01", "admin", "")
 # ─── Page Config ───────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="مراجع التشريعات",
