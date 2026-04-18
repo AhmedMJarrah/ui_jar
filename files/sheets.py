@@ -1,54 +1,58 @@
 """
-sheets.py — All Google Sheets read/write operations
-With caching to avoid hitting Google Sheets API rate limits.
+sheets.py — Google Sheets backend
+Master sheet approach: one source of truth, users update their assigned rows only.
 """
 import streamlit as st
 import gspread
 from google.oauth2.service_account import Credentials
-import pandas as pd
 from datetime import datetime
 import bcrypt
 import time
+import pandas as pd
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
 ]
 
-SPREADSHEET_ID = "1svY3lp6RUTp4K-bigbx2JDAeh8RNLACsuXCYqxP4QgQ"
-
+SPREADSHEET_ID  = "1svY3lp6RUTp4K-bigbx2JDAeh8RNLACsuXCYqxP4QgQ"
 SHEET_USERS     = "users"
+SHEET_MASTER    = "master_data"
 SHEET_AUDIT_LOG = "audit_log"
 
+MASTER_HEADERS = [
+    "row_id", "year", "magazine_number", "leg_name", "leg_number",
+    "status", "entity_final", "type",
+    "entity_audited", "type_audited", "audit_status", "audit_notes",
+    "assigned_to", "last_updated",
+]
 
 # ─── CONNECTION ────────────────────────────────────────────────────────────────
 
 @st.cache_resource(show_spinner=False)
 def get_client():
-    """Authenticate once and cache the client forever."""
-    creds_dict = dict(st.secrets["gcp_service_account"])
-    creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+    creds = Credentials.from_service_account_info(
+        dict(st.secrets["gcp_service_account"]), scopes=SCOPES
+    )
     return gspread.authorize(creds)
 
 
 @st.cache_resource(show_spinner=False)
 def get_spreadsheet():
-    """Cache the spreadsheet object."""
     return get_client().open_by_key(SPREADSHEET_ID)
 
 
 def ensure_sheet(spreadsheet, name: str, headers: list):
-    """Get sheet by name, create with headers if missing."""
     try:
         return spreadsheet.worksheet(name)
     except gspread.WorksheetNotFound:
-        ws = spreadsheet.add_worksheet(title=name, rows=2000, cols=len(headers))
+        ws = spreadsheet.add_worksheet(title=name, rows=3000, cols=len(headers))
         ws.append_row(headers)
         return ws
 
 
-def safe_call(fn, retries=3, wait=5):
-    """Retry wrapper for API calls that may hit rate limits."""
+def safe_call(fn, retries=4, wait=6):
+    """Retry on 429 rate-limit errors."""
     for attempt in range(retries):
         try:
             return fn()
@@ -59,46 +63,57 @@ def safe_call(fn, retries=3, wait=5):
                 raise
 
 
-# ─── USER MANAGEMENT ───────────────────────────────────────────────────────────
+# ─── USERS ─────────────────────────────────────────────────────────────────────
 
 def get_users_sheet(spreadsheet):
-    return ensure_sheet(spreadsheet, SHEET_USERS,
-                        ["username", "password_hash", "role", "created_at", "last_active"])
+    return ensure_sheet(
+        spreadsheet, SHEET_USERS,
+        ["username", "password_hash", "role", "assigned_half",
+         "created_at", "last_active"]
+    )
 
 
 @st.cache_data(ttl=30, show_spinner=False)
-def load_users_cached(_spreadsheet_id: str) -> dict:
-    """
-    Cache users for 30 seconds to avoid repeated reads.
-    Uses spreadsheet_id as key (hashable) instead of the object itself.
-    """
-    sp = get_spreadsheet()
-    ws = get_users_sheet(sp)
+def load_users_cached(_sid: str) -> dict:
+    sp      = get_spreadsheet()
+    ws      = get_users_sheet(sp)
     records = safe_call(ws.get_all_records)
     return {r["username"]: r for r in records}
 
 
 def load_users(spreadsheet=None) -> dict:
-    """Public interface — always reads from cache."""
     return load_users_cached(SPREADSHEET_ID)
 
 
-def invalidate_users_cache():
-    """Call after any write to users sheet to force refresh."""
+def invalidate_users():
     load_users_cached.clear()
 
 
-def create_user(spreadsheet, username: str, password: str, role: str = "auditor"):
+def create_user(spreadsheet, username: str, password: str,
+                role: str = "auditor", assigned_half: str = ""):
     users = load_users()
     if username in users:
         return False, "اسم المستخدم موجود مسبقاً"
-    ws     = get_users_sheet(spreadsheet)
+
+    # Auto-assign half if auditor and not specified
+    if role == "auditor" and not assigned_half:
+        auditors = [u for u in users.values() if u["role"] == "auditor"]
+        halves_taken = [u.get("assigned_half", "") for u in auditors]
+        if "1" not in halves_taken:
+            assigned_half = "1"
+        elif "2" not in halves_taken:
+            assigned_half = "2"
+        else:
+            return False, "الحد الأقصى للمراجعين هو مستخدمان فقط"
+
     hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-    safe_call(lambda: ws.append_row(
-        [username, hashed, role, datetime.now().isoformat(), ""]
-    ))
-    invalidate_users_cache()
-    return True, "تم إنشاء المستخدم بنجاح"
+    ws = get_users_sheet(spreadsheet)
+    safe_call(lambda: ws.append_row([
+        username, hashed, role, assigned_half,
+        datetime.now().isoformat(), ""
+    ]))
+    invalidate_users()
+    return True, f"تم إنشاء المستخدم — النصف المخصص: {assigned_half}"
 
 
 def delete_user(spreadsheet, username: str):
@@ -106,14 +121,8 @@ def delete_user(spreadsheet, username: str):
     records = safe_call(ws.get_all_values)
     for i, row in enumerate(records):
         if row and row[0] == username:
-            safe_call(lambda: ws.delete_rows(i + 1))
-            try:
-                spreadsheet.del_worksheet(
-                    spreadsheet.worksheet(f"user_{username}")
-                )
-            except Exception:
-                pass
-            invalidate_users_cache()
+            safe_call(lambda idx=i: ws.delete_rows(idx + 1))
+            invalidate_users()
             return True
     return False
 
@@ -124,12 +133,11 @@ def verify_password(spreadsheet, username: str, password: str):
         return False, None
     u = users[username]
     if bcrypt.checkpw(password.encode(), u["password_hash"].encode()):
-        # Update last_active in background (non-blocking)
         try:
             ws   = get_users_sheet(spreadsheet)
             cell = safe_call(lambda: ws.find(username))
-            safe_call(lambda: ws.update_cell(cell.row, 5, datetime.now().isoformat()))
-            invalidate_users_cache()
+            safe_call(lambda: ws.update_cell(cell.row, 6, datetime.now().isoformat()))
+            invalidate_users()
         except Exception:
             pass
         return True, u
@@ -141,107 +149,128 @@ def update_password(spreadsheet, username: str, new_password: str):
     cell   = safe_call(lambda: ws.find(username))
     hashed = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt()).decode()
     safe_call(lambda: ws.update_cell(cell.row, 2, hashed))
-    invalidate_users_cache()
+    invalidate_users()
 
 
-# ─── USER DATA SHEET ───────────────────────────────────────────────────────────
+# ─── MASTER DATA ───────────────────────────────────────────────────────────────
 
-DATA_HEADERS = [
-    "row_id", "leg_name", "entity_final", "type",
-    "entity_audited", "type_audited", "audit_status", "audit_notes",
-    "last_updated",
-]
-
-
-def get_user_sheet(spreadsheet, username: str):
-    return ensure_sheet(spreadsheet, f"user_{username}", DATA_HEADERS)
-
-
-def save_user_data(spreadsheet, username: str, groups: list):
-    """Write all audit rows for this user to their sheet (initial upload)."""
-    ws   = get_user_sheet(spreadsheet, username)
-    rows = [DATA_HEADERS]
-    row_id = 0
-    for g in groups:
-        for r in g["rows"]:
-            rows.append([
-                row_id,
-                r["leg_name"],
-                r["entity_final"],
-                r["type"],
-                r["entity_audited"],
-                r["type_audited"],
-                r["audit_status"],
-                r["audit_notes"],
-                datetime.now().isoformat(),
-            ])
-            row_id += 1
+def upload_master_file(spreadsheet, df: pd.DataFrame):
+    """
+    Admin uploads file → saved as master_data sheet.
+    Laws split 50/50 between user slots 1 and 2.
+    """
+    ws = ensure_sheet(spreadsheet, SHEET_MASTER, MASTER_HEADERS)
     safe_call(ws.clear)
-    safe_call(lambda: ws.update(rows))
 
+    unique_laws = df["leg_name"].unique().tolist()
+    mid         = len(unique_laws) // 2
+    half1_laws  = set(unique_laws[:mid])
 
-def save_single_row(spreadsheet, username: str, row_id: int, row_data: dict):
-    """Update only one row — fast and minimal API calls."""
-    ws      = get_user_sheet(spreadsheet, username)
-    records = safe_call(ws.get_all_values)
-    for i, rec in enumerate(records):
-        if rec and str(rec[0]) == str(row_id):
-            safe_call(lambda: ws.update(
-                f"A{i+1}:I{i+1}",
-                [[
-                    row_id,
-                    row_data["leg_name"],
-                    row_data["entity_final"],
-                    row_data["type"],
-                    row_data["entity_audited"],
-                    row_data["type_audited"],
-                    row_data["audit_status"],
-                    row_data["audit_notes"],
-                    datetime.now().isoformat(),
-                ]]
-            ))
-            return
+    rows = [MASTER_HEADERS]
+    for idx, row in df.iterrows():
+        half = "1" if row["leg_name"] in half1_laws else "2"
+        rows.append([
+            idx,                                    # row_id
+            row.get("year", ""),
+            row.get("magazine_number", ""),
+            row.get("leg_name", ""),
+            row.get("leg_number", ""),
+            row.get("status", ""),
+            row.get("entity_final", ""),
+            row.get("type", ""),
+            row.get("entity_final", ""),            # entity_audited = original
+            row.get("type", ""),                    # type_audited   = original
+            "لم يُراجع",                            # audit_status
+            "",                                     # audit_notes
+            half,                                   # assigned_to
+            "",                                     # last_updated
+        ])
+
+    # Batch write in chunks to avoid payload limits
+    chunk = 200
+    for i in range(0, len(rows), chunk):
+        safe_call(lambda s=i: ws.append_rows(rows[s:s + chunk]))
+
+    invalidate_master()
+    return len(rows) - 1  # rows uploaded
 
 
 @st.cache_data(ttl=60, show_spinner=False)
-def load_user_data_cached(_spreadsheet_id: str, username: str):
-    """Cache user data for 60 seconds."""
-    sp = get_spreadsheet()
-    try:
-        ws      = get_user_sheet(sp, username)
-        records = safe_call(ws.get_all_records)
-        return records if records else None
-    except Exception:
-        return None
+def load_master_cached(_sid: str):
+    sp  = get_spreadsheet()
+    ws  = ensure_sheet(sp, SHEET_MASTER, MASTER_HEADERS)
+    return safe_call(ws.get_all_records)
 
 
-def load_user_data(spreadsheet, username: str):
-    return load_user_data_cached(SPREADSHEET_ID, username)
+def load_master(spreadsheet=None):
+    return load_master_cached(SPREADSHEET_ID)
 
 
-def invalidate_user_data_cache():
-    load_user_data_cached.clear()
+def invalidate_master():
+    load_master_cached.clear()
 
 
-def rebuild_groups_from_sheet(records: list) -> list:
-    """Convert flat sheet records back into grouped structure."""
-    seen, groups = {}, []
-    for i, r in enumerate(records):
-        name = r["leg_name"]
-        if name not in seen:
-            seen[name] = len(groups)
-            groups.append({"leg_name": name, "rows": []})
-        groups[seen[name]]["rows"].append({
-            "orig_idx":       i,
-            "leg_name":       r["leg_name"],
-            "entity_final":   r["entity_final"],
-            "type":           r["type"],
-            "entity_audited": r["entity_audited"],
-            "type_audited":   r["type_audited"],
-            "audit_status":   r["audit_status"],
-            "audit_notes":    r["audit_notes"],
-        })
-    return groups
+def load_user_rows(username: str, assigned_half: str) -> list:
+    """Return only the rows assigned to this user."""
+    records = load_master()
+    return [r for r in records if str(r.get("assigned_to", "")) == str(assigned_half)]
+
+
+def save_audited_row(spreadsheet, row_id: int, username: str,
+                     entity_audited: str, type_audited: str,
+                     audit_status: str, audit_notes: str):
+    """Update one row in master_data sheet."""
+    ws      = ensure_sheet(spreadsheet, SHEET_MASTER, MASTER_HEADERS)
+    records = safe_call(ws.get_all_values)   # includes header
+
+    for i, rec in enumerate(records):
+        if i == 0:
+            continue  # skip header
+        if str(rec[0]) == str(row_id):
+            # Columns: entity_audited=9, type_audited=10, audit_status=11,
+            #          audit_notes=12, last_updated=14  (1-indexed)
+            row_num = i + 1
+            safe_call(lambda r=row_num: ws.update(
+                f"I{r}:N{r}",
+                [[entity_audited, type_audited, audit_status,
+                  audit_notes, str(rec[12]), datetime.now().isoformat()]]
+            ))
+            invalidate_master()
+            return
+
+
+def get_master_df(spreadsheet) -> pd.DataFrame:
+    """Return full master as DataFrame for admin download."""
+    records = load_master()
+    return pd.DataFrame(records)
+
+
+# ─── UNIQUE ENTITIES & TYPES (for autocomplete) ────────────────────────────────
+
+@st.cache_data(ttl=120, show_spinner=False)
+def get_unique_entities_cached(_sid: str) -> list:
+    records = load_master()
+    entities = sorted(set(
+        r["entity_final"] for r in records if r.get("entity_final")
+    ))
+    return entities
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def get_unique_types_cached(_sid: str) -> list:
+    records = load_master()
+    types = sorted(set(
+        r["type"] for r in records if r.get("type")
+    ))
+    return types
+
+
+def get_unique_entities() -> list:
+    return get_unique_entities_cached(SPREADSHEET_ID)
+
+
+def get_unique_types() -> list:
+    return get_unique_types_cached(SPREADSHEET_ID)
 
 
 # ─── AUDIT LOG ─────────────────────────────────────────────────────────────────
@@ -260,38 +289,37 @@ def log_change(spreadsheet, username: str, leg_name: str,
             username, leg_name, field, old_val, new_val,
         ]))
     except Exception:
-        pass  # Never let logging break the main flow
+        pass
 
 
-# ─── ADMIN DASHBOARD ───────────────────────────────────────────────────────────
+# ─── ADMIN PROGRESS ────────────────────────────────────────────────────────────
 
 @st.cache_data(ttl=30, show_spinner=False)
-def get_all_users_progress_cached(_spreadsheet_id: str) -> list:
-    sp    = get_spreadsheet()
-    users = load_users()
-    result = []
+def get_all_users_progress_cached(_sid: str) -> list:
+    users   = load_users()
+    records = load_master()
+    result  = []
+
     for username, info in users.items():
         if info["role"] == "admin":
             continue
-        try:
-            ws       = sp.worksheet(f"user_{username}")
-            records  = safe_call(ws.get_all_records)
-            total    = len(records)
-            reviewed = sum(1 for r in records if r.get("audit_status") != "لم يُراجع")
-            modified = sum(1 for r in records if r.get("audit_status") == "معدّل")
-            pct      = int(reviewed / total * 100) if total else 0
-        except Exception:
-            total = reviewed = modified = pct = 0
+        half     = str(info.get("assigned_half", ""))
+        my_rows  = [r for r in records if str(r.get("assigned_to", "")) == half]
+        total    = len(my_rows)
+        reviewed = sum(1 for r in my_rows if r.get("audit_status") != "لم يُراجع")
+        modified = sum(1 for r in my_rows if r.get("audit_status") == "معدّل")
+        pct      = int(reviewed / total * 100) if total else 0
         result.append({
-            "username":    username,
-            "total":       total,
-            "reviewed":    reviewed,
-            "modified":    modified,
-            "pct":         pct,
-            "last_active": info.get("last_active", ""),
+            "username":     username,
+            "assigned_half": half,
+            "total":        total,
+            "reviewed":     reviewed,
+            "modified":     modified,
+            "pct":          pct,
+            "last_active":  info.get("last_active", ""),
         })
     return result
 
 
-def get_all_users_progress(spreadsheet) -> list:
+def get_all_users_progress(spreadsheet=None) -> list:
     return get_all_users_progress_cached(SPREADSHEET_ID)
