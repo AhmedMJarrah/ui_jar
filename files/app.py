@@ -3,10 +3,6 @@ import pandas as pd
 import io
 from datetime import datetime
 
-# TEMP - remove after use
-from sheets import get_spreadsheet, create_user
-sp = get_spreadsheet()
-create_user(sp, "Jarrah01", "rrrrr01", "admin", "")
 # ─── Page Config ───────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="مراجع التشريعات",
@@ -199,6 +195,14 @@ if st.session_state.groups is None:
         )
     if not records:
         st.warning("لم يتم رفع الملف من قِبَل المدير بعد. الرجاء الانتظار.")
+        # Debug info
+        from sheets import load_master
+        all_records = load_master()
+        st.info(f"🔍 تشخيص: إجمالي السجلات في master_data: {len(all_records)}")
+        if all_records:
+            sample_halves = list(set(str(r.get("assigned_to","")) for r in all_records[:20]))
+            st.info(f"🔍 قيم assigned_to في الملف: {sample_halves}")
+        st.info(f"🔍 النصف المخصص لهذا المستخدم: '{st.session_state.assigned_half}'")
         if st.button("🔄 إعادة المحاولة"):
             st.rerun()
         st.stop()
