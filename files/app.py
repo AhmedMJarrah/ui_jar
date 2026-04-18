@@ -8,7 +8,7 @@ st.set_page_config(
     page_title="مراجع التشريعات",
     page_icon="⚖️",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 # ─── CSS ───────────────────────────────────────────────────────────────────────
@@ -130,17 +130,18 @@ for k, v in [("logged_in",False),("username",""),("role",""),
 # ─── Auth ──────────────────────────────────────────────────────────────────────
 require_login()
 
-# ─── Sidebar ───────────────────────────────────────────────────────────────────
-with st.sidebar:
-    st.markdown(f"### 👤 {st.session_state.username}")
-    role_txt = "🛡️ مدير" if st.session_state.role == "admin" else f"👤 مراجع · النصف {st.session_state.assigned_half}"
-    st.markdown(role_txt)
+# ─── Top Bar ───────────────────────────────────────────────────────────────────
+top_left, top_right = st.columns([6, 1])
+with top_left:
+    role_txt = "🛡️ مدير" if st.session_state.role == "admin" else f"👤 {st.session_state.username} · النصف {st.session_state.assigned_half}"
+    sync_html = ""
     if st.session_state.get("last_sync"):
         cls = "sync-ok" if st.session_state.sync_ok else "sync-fail"
-        txt = f"✅ {st.session_state.last_sync}" if st.session_state.sync_ok else f"⚠️ فشلت المزامنة"
-        st.markdown(f'<span class="sync-badge {cls}">{txt}</span>', unsafe_allow_html=True)
-    st.markdown("---")
-    if st.button("🚪 تسجيل الخروج", use_container_width=True):
+        txt = f"✅ {st.session_state.last_sync}" if st.session_state.sync_ok else "⚠️ فشلت المزامنة"
+        sync_html = f'<span class="sync-badge {cls}" style="margin-right:12px">{txt}</span>'
+    st.markdown(f'<span style="font-size:0.9rem;color:var(--text2)">{role_txt}</span>{sync_html}', unsafe_allow_html=True)
+with top_right:
+    if st.button("🚪 خروج", use_container_width=True):
         logout()
 
 # ─── Admin ─────────────────────────────────────────────────────────────────────
