@@ -168,12 +168,18 @@ def admin_panel():
                     with st.spinner("جارٍ الإنشاء..."):
                         ok, msg = create_user(sp, new_user.strip(), new_pass, new_role)
                     st.success(msg) if ok else st.error(msg)
-                    if ok: st.rerun()
+                    if ok:
+                        from sheets import invalidate_users
+                        invalidate_users()
+                        st.cache_data.clear()
+                        st.rerun()
                 else:
                     st.warning("الرجاء تعبئة جميع الحقول")
 
         with col_list:
             st.markdown("#### 👥 المستخدمون")
+            from sheets import invalidate_users
+            invalidate_users()
             users = load_users()
             for uname, info in users.items():
                 icon = "🛡️" if info["role"] == "admin" else "👤"
