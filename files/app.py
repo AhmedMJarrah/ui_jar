@@ -186,7 +186,17 @@ if st.session_state.groups is None:
             st.session_state.assigned_half
         )
     if not records:
+        # Cache might be stale — force clear and retry once
+        from sheets import invalidate_master
+        invalidate_master()
+        records = load_user_rows(
+            st.session_state.username,
+            st.session_state.assigned_half
+        )
+    if not records:
         st.warning("لم يتم رفع الملف من قِبَل المدير بعد. الرجاء الانتظار.")
+        if st.button("🔄 إعادة المحاولة"):
+            st.rerun()
         st.stop()
     st.session_state.groups  = build_groups(records)
     st.session_state.cur_law = 0
