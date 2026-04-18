@@ -68,8 +68,7 @@ def safe_call(fn, retries=4, wait=6):
 def get_users_sheet(spreadsheet):
     return ensure_sheet(
         spreadsheet, SHEET_USERS,
-        ["username", "password_hash", "role", "assigned_half",
-         "created_at", "last_active"]
+        ["username", "password_hash", "role", "created_at", "last_active", "assigned_half"]
     )
 
 
@@ -109,8 +108,8 @@ def create_user(spreadsheet, username: str, password: str,
     hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
     ws = get_users_sheet(spreadsheet)
     safe_call(lambda: ws.append_row([
-        username, hashed, role, assigned_half,
-        datetime.now().isoformat(), ""
+        username, hashed, role,
+        datetime.now().isoformat(), "", assigned_half
     ]))
     invalidate_users()
     return True, f"تم إنشاء المستخدم — النصف المخصص: {assigned_half}"
@@ -136,7 +135,7 @@ def verify_password(spreadsheet, username: str, password: str):
         try:
             ws   = get_users_sheet(spreadsheet)
             cell = safe_call(lambda: ws.find(username))
-            safe_call(lambda: ws.update_cell(cell.row, 6, datetime.now().isoformat()))
+            safe_call(lambda: ws.update_cell(cell.row, 5, datetime.now().isoformat()))
             invalidate_users()
         except Exception:
             pass
