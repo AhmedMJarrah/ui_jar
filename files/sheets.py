@@ -205,6 +205,9 @@ def upload_master_file(spreadsheet, df: pd.DataFrame):
         safe_call(lambda s=i: ws.append_rows(rows[s:s + chunk]))
 
     invalidate_master()
+    # Also clear entity/type caches
+    get_unique_entities_cached.clear()
+    get_unique_types_cached.clear()
     return len(rows) - 1  # rows uploaded
 
 
