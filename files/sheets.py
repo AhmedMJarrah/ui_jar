@@ -177,10 +177,11 @@ def upload_master_file(spreadsheet, df: pd.DataFrame):
     unique_laws = df["leg_name"].unique().tolist()
     mid         = len(unique_laws) // 2
     half1_laws  = set(unique_laws[:mid])
+    half2_laws  = set(unique_laws[mid:])
 
     rows = [MASTER_HEADERS]
     for idx, row in df.iterrows():
-        half = "1" if row["leg_name"] in half1_laws else "2"
+        half = "1" if clean(row.get("leg_name", "")) in half1_laws else "2"
         rows.append([
             idx,
             clean(row.get("year", "")),
