@@ -34,7 +34,7 @@ def login_page():
                         st.session_state.logged_in    = True
                         st.session_state.username     = username.strip()
                         st.session_state.role         = user_info["role"]
-                        st.session_state.assigned_half = str(user_info.get("assigned_half", ""))
+                        st.session_state.assigned_half = str(user_info.get("assigned_half", "")).strip()
                         st.session_state.spreadsheet  = sp
                         st.rerun()
                     else:
