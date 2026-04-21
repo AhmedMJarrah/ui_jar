@@ -208,8 +208,22 @@ if st.session_state.groups is None:
             st.rerun()
         st.stop()
     st.session_state.groups  = build_groups(records)
-    st.session_state.cur_law = 0
-    st.session_state.cur_row = 0
+
+    # ── Resume: find first unreviewed law & row ──
+    resumed = False
+    for law_idx, g in enumerate(st.session_state.groups):
+        for row_idx, r in enumerate(g["rows"]):
+            if r["audit_status"] == "لم يُراجع":
+                st.session_state.cur_law = law_idx
+                st.session_state.cur_row = row_idx
+                resumed = True
+                break
+        if resumed:
+            break
+    if not resumed:
+        # All reviewed — go to last law
+        st.session_state.cur_law = len(st.session_state.groups) - 1
+        st.session_state.cur_row = 0
 
 groups     = st.session_state.groups
 cur_law    = st.session_state.cur_law
