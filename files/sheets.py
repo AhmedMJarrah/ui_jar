@@ -96,14 +96,14 @@ def create_user(spreadsheet, username: str, password: str,
 
     # Auto-assign half if auditor and not specified
     if role == "auditor" and not assigned_half:
-        auditors = [u for u in users.values() if u["role"] == "auditor"]
-        halves_taken = [u.get("assigned_half", "") for u in auditors]
-        if "1" not in halves_taken:
-            assigned_half = "1"
-        elif "2" not in halves_taken:
-            assigned_half = "2"
-        else:
-            return False, "الحد الأقصى للمراجعين هو مستخدمان فقط"
+        auditors    = [u for u in users.values() if u["role"] == "auditor"]
+        halves_taken = [str(u.get("assigned_half", "")).strip() for u in auditors]
+        for h in ["1", "2", "3", "4"]:
+            if h not in halves_taken:
+                assigned_half = h
+                break
+        if not assigned_half:
+            return False, "الحد الأقصى للمراجعين هو أربعة مستخدمين فقط"
 
     hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
     ws = get_users_sheet(spreadsheet)
